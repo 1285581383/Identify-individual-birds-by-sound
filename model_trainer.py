@@ -1,4 +1,4 @@
-import pandas as pd
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 import numpy as np
 import time
@@ -88,31 +88,51 @@ class ModelTrainer:
             self.output_log(f"{attr_name}: {attr_value}")
 
         # 训练分类器
-        start = time.time()
+        start1 = time.time()
+        print("训练分类器中...")
         classifier.fit(X_train, y_train)
         self.classifier = classifier
-        end = time.time()
+        print("训练分类器完成")
+        end1 = time.time()
 
         # 保存分类器和标准化器
         joblib.dump(classifier, f"{X_name}_{classifier_type}_model.pkl")
         joblib.dump(self.scaler, f"{X_name}_{classifier_type}_scalar")
 
+        start2 = time.time()
         # 预测及评估分类器 测试集
-        y_pred_test = classifier.predict(X_test)
+        with tqdm(total=len(X_test), desc="预测及评估分类器 测试集") as pbar_test:
+            y_pred_test = []
+            for x_test_sample in X_test:
+                prediction = classifier.predict([x_test_sample])[0]
+                y_pred_test.append(prediction)
+                pbar_test.update(1)
+
         accuracy_test = accuracy_score(y_test, y_pred_test)
+
         # 预测及评估分类器 训练集
-        y_pred_train = classifier.predict(X_train)
+        with tqdm(total=len(X_train), desc="预测及评估分类器 训练集") as pbar_train:
+            y_pred_train = []
+            for x_train_sample in X_train:
+                prediction = classifier.predict([x_train_sample])[0]
+                y_pred_train.append(prediction)
+                pbar_train.update(1)
+
         accuracy_train = accuracy_score(y_train, y_pred_train)
+        end2 = time.time()
 
         print(f"测试集准确率:{accuracy_test}")
         print(f"训练集准确率:{accuracy_train}")
-        print(f"训练时间:{f'{end - start:.2f}' if end - start >= 0.01 else '<0.01'}s")
+        print(f"训练时间:{f'{end1 - start1:.2f}' if end1 - start1 >= 0.01 else '<0.01'}s")
+        print(
+            f"预测及评估时间:{f'{end2 - start2:.2f}' if end2 - start2 >= 0.01 else '<0.01'}s"
+        )
         print(f"训练模型保存为{X_name}_{classifier_type}_model.pkl")
         print(f"标准化器保存为{X_name}_{classifier_type}_scalar\n")
         self.output_log(f"测试集准确率:{accuracy_test}")
         self.output_log(f"训练集准确率:{accuracy_train}")
         self.output_log(
-            f"训练时间:{f'{end - start:.2f}' if end - start >= 0.01 else '<0.01'}s"
+            f"训练时间:{f'{end1 - start1:.2f}' if end1 - start1 >= 0.01 else '<0.01'}s"
         )
         self.output_log(f"训练模型保存为{X_name}_{classifier_type}_model.pkl")
         self.output_log(f"标准化器保存为{X_name}_{classifier_type}_scalar\n")

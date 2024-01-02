@@ -406,5 +406,5 @@ if __name__ == "__main__":
         "SVC",
         kernel="rbf",
         C=10,
-        verbose=True,
+        verbose=False,
     )
