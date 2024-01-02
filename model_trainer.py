@@ -20,8 +20,6 @@ class ModelTrainer:
         """模型训练器
 
         Args:
-            datafile (str): 数据文件路径
-
             clf_random (int, optional): 训练模型随机种子. Defaults to 1.
 
             split_random (int, optional): 数据集划分随机种子,用于改变数据集划分为训练集和测试集的方法. Defaults to 1.
@@ -55,11 +53,18 @@ class ModelTrainer:
         self.scaler = StandardScaler()
         # X = scaler.fit_transform(self.X)
         # 划分训练集和测试集
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, test_size=self.test_size, random_state=self.split_random
-        )
+        if self.test_size == 0:
+            X_train = self.X
+            y_train = self.y
+        elif 0 < self.test_size < 1:
+            X_train, X_test, y_train, y_test = train_test_split(
+                self.X, self.y, test_size=self.test_size, random_state=self.split_random
+            )
+        else:
+            raise ValueError("Invalid test set size.")
         X_train = self.scaler.fit_transform(X_train)
-        X_test = self.scaler.transform(X_test)
+        if self.test_size != 0:
+            X_test = self.scaler.transform(X_test)
 
         if classifier_type == "MLP":
             # 使用MLPClassifier
@@ -78,7 +83,7 @@ class ModelTrainer:
             # 使用KNeighborsClassifier
             classifier = KNeighborsClassifier(**classifier_params)
         else:
-            raise ValueError("Invalid classifier type")
+            raise ValueError("Invalid classifier type.")
 
         print(f"分类器:{classifier_type}")
         self.output_log(f"分类器:{classifier_type}")
@@ -100,15 +105,18 @@ class ModelTrainer:
         joblib.dump(self.scaler, f"{X_name}_{classifier_type}_scalar")
 
         start2 = time.time()
-        # 预测及评估分类器 测试集
-        with tqdm(total=len(X_test), desc="预测及评估分类器 测试集") as pbar_test:
-            y_pred_test = []
-            for x_test_sample in X_test:
-                prediction = classifier.predict([x_test_sample])[0]
-                y_pred_test.append(prediction)
-                pbar_test.update(1)
+        if self.test_size != 0:
+            # 预测及评估分类器 测试集
+            with tqdm(total=len(X_test), desc="预测及评估分类器 测试集") as pbar_test:
+                y_pred_test = []
+                for x_test_sample in X_test:
+                    prediction = classifier.predict([x_test_sample])[0]
+                    y_pred_test.append(prediction)
+                    pbar_test.update(1)
 
-        accuracy_test = accuracy_score(y_test, y_pred_test)
+            accuracy_test = accuracy_score(y_test, y_pred_test)
+        elif self.test_size == 0:
+            accuracy_test = None
 
         # 预测及评估分类器 训练集
         with tqdm(total=len(X_train), desc="预测及评估分类器 训练集") as pbar_train:

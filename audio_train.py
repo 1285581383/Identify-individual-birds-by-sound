@@ -17,7 +17,7 @@ class AudioTrain:
         hop_length: int = 1024,
         n_fft: int = 4096,
         n_mels: int = 128,
-        n_mfcc: int = 13,
+        n_mfcc: int = 20,
         top_db: int = 20,
         save_fig_flag: bool = False,
         save_remix_audio_flag: bool = False,
@@ -31,7 +31,7 @@ class AudioTrain:
             hop_length (int, optional): _帧移，单位同帧长_. Defaults to 1024.
             n_fft (int, optional): _短时傅里叶变换的采样点数_. Defaults to 4096.
             n_mels (int, optional): _梅尔滤波器的数量_. Defaults to 128.
-            n_mfcc (int, optional): _梅尔频率倒谱系数的数量_. Defaults to 13.
+            n_mfcc (int, optional): _梅尔频率倒谱系数的数量_. Defaults to 20.
             top_db (int, optional): _能量阈值，声音文件中低于该能量的帧将会被移除_. Defaults to 20.
             save_fig_flag (bool, optional): _是否保存mfcc和mel图片，位置为脚本同级目录下的img文件夹_. Defaults to False.
             save_remix_audio_flag (bool, optional): _是否保存重新组合的声音文件，位置为脚本同级目录下的audio文件夹_. Defaults to False.
@@ -366,20 +366,31 @@ class AudioTrain:
         # 关闭图片
         plt.close()
 
-    def train(self, X_name: str, classifier_type: str, **classifier_params):
+    def train(
+        self,
+        X_name: str,
+        classifier_type: str,
+        clf_random: int = 1,
+        split_random: int = 1,
+        test_size: float = 0.3,
+        **classifier_params,
+    ):
         """训练模型
 
         Args:
             classifier_type (_str_): _可选择的分类器类型:'MLP', 'SVC', 'RF', 'KNN'_
             **classifier_params: 分类器的参数
             X_name (_str_): _训练集名称_
+            clf_random (int, optional): 训练模型随机种子. Defaults to 1.
+            split_random (int, optional): 数据集划分随机种子,用于改变数据集划分为训练集和测试集的方法. Defaults to 1.
+            test_size (float, optional): 划分的测试集占数据集比. Defaults to 0.3.
 
         Returns:
             accuracy_test (_float_): _测试集准确率_
             accuracy_train (_float_): _训练集准确率_
 
         """
-        mt = model_trainer.ModelTrainer()
+        mt = model_trainer.ModelTrainer(clf_random, split_random, test_size)
         mt.load_X_y(self.combined_features, self.y)
         accuracy_test, accuracy_train = mt.train_and_evaluate_classifier(
             X_name, classifier_type, **classifier_params
@@ -402,8 +413,9 @@ if __name__ == "__main__":
     #     verbose=True,
     # )
     at.train(
-        "audio",
-        "SVC",
+        X_name="audio",
+        classifier_type="SVC",
+        test_size=0,
         kernel="rbf",
         C=10,
         verbose=False,
