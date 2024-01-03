@@ -19,6 +19,12 @@ class AudioTrain:
         n_mels: int = 128,
         n_mfcc: int = 20,
         top_db: int = 20,
+        alpha_s: float = 4,
+        beta_s: float = 0.001,
+        gamma_s: float = 1,
+        k: int = 1,
+        alpha_w: float = 1,
+        beta_w: float = 2,
         save_fig_flag: bool = False,
         save_remix_audio_flag: bool = False,
         n_jobs: int = -1,
@@ -32,7 +38,7 @@ class AudioTrain:
             n_fft (int, optional): _短时傅里叶变换的采样点数_. Defaults to 4096.
             n_mels (int, optional): _梅尔滤波器的数量_. Defaults to 128.
             n_mfcc (int, optional): _梅尔频率倒谱系数的数量_. Defaults to 20.
-            top_db (int, optional): _能量阈值，声音文件中低于该能量的帧将会被移除_. Defaults to 20.
+            top_db (int, optional): _能量阈值，声音文件中低于该能量(-top_db)的帧将会被移除_. Defaults to 20.
             save_fig_flag (bool, optional): _是否保存mfcc和mel图片，位置为脚本同级目录下的img文件夹_. Defaults to False.
             save_remix_audio_flag (bool, optional): _是否保存重新组合的声音文件，位置为脚本同级目录下的audio文件夹_. Defaults to False.
             n_jobs (int, optional): _并行处理音频文件的进程数_. Defaults to -1.
@@ -52,6 +58,12 @@ class AudioTrain:
         self.save_fig_flag = save_fig_flag
         self.save_remix_audio_flag = save_remix_audio_flag
         self.n_jobs = n_jobs
+        self.alpha_s = alpha_s
+        self.beta_s = beta_s
+        self.gamma_s = gamma_s
+        self.k = k
+        self.alpha_w = alpha_w
+        self.beta_w = beta_w
 
     def load_files(self, audio_folder: str):
         """_加载训练声音文件_
@@ -80,6 +92,12 @@ class AudioTrain:
                 n_mels=self.n_mels,
                 n_mfcc=self.n_mfcc,
                 top_db=self.top_db,
+                alpha_s=self.alpha_s,
+                beta_s=self.beta_s,
+                gamma_s=self.gamma_s,
+                k=self.k,
+                alpha_w=self.alpha_w,
+                beta_w=self.beta_w,
                 save_fig_flag=self.save_fig_flag,
                 save_remix_audio_flag=self.save_remix_audio_flag,
             )
@@ -138,14 +156,20 @@ class AudioTrain:
 
     @staticmethod
     def preprocess_audio(
-        audio_file,
+        audio_file: str,
         sr: int = 22050,
         win_length: int = 4096,
         hop_length: int = 1024,
         n_fft: int = 4096,
         n_mels: int = 128,
-        n_mfcc: int = 13,
+        n_mfcc: int = 20,
         top_db: int = 20,
+        alpha_s: float = 4,
+        beta_s: float = 0.001,
+        gamma_s: float = 1,
+        k: int = 1,
+        alpha_w: float = 1,
+        beta_w: float = 2,
         save_fig_flag: bool = False,
         save_remix_audio_flag: bool = False,
     ) -> np.array:
@@ -159,7 +183,7 @@ class AudioTrain:
             n_fft (int, optional): _短时傅里叶变换的采样点数_. Defaults to 4096.
             n_mels (int, optional): _梅尔滤波器的数量_. Defaults to 128.
             n_mfcc (int, optional): _梅尔频率倒谱系数的数量_. Defaults to 13.
-            top_db (int, optional): _能量阈值，声音文件中低于该能量的帧将会被移除_. Defaults to 20.
+            top_db (int, optional): _能量阈值，声音文件中低于该能量(-top_db)的帧将会被移除_. Defaults to 20.
             save_fig_flag (bool, optional): _是否保存mfcc和mel图片,位置为脚本同级目录下的img文件夹_. Defaults to False.
             save_remix_audio_flag (bool, optional): _是否保存分割后的声音文件，位置为脚本同级目录下的remix_audio文件夹_. Defaults to False.
         Returns:
@@ -168,22 +192,48 @@ class AudioTrain:
         """
         file_name = os.path.splitext(os.path.basename(audio_file))[0]
         sig, sr = librosa.load(audio_file, sr=sr)
-        # 分割声音文件，清除不含鸟叫声的部分，阈值默认为20db
+        # 分割声音文件，帧能量大于-top_db的索引数组
         intervals = librosa.effects.split(
             sig, top_db=top_db, frame_length=win_length, hop_length=hop_length
         )
+        # 分割声音文件，帧能量小于-top_db的索引数组
+        inverse_intervals = AudioTrain.get_inverse_intervals(intervals, len(sig))
+
         sig_remix = librosa.effects.remix(sig, intervals)
+        sig_noise_remix = librosa.effects.remix(sig, inverse_intervals)
+
+        sig_subtraction = AudioTrain.spec_subtract(
+            noisy=sig_remix,
+            noise=sig_noise_remix,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            alpha_s=alpha_s,
+            beta_s=beta_s,
+            gamma_s=gamma_s,
+            k=k,
+        )
+        sig_wiener = AudioTrain.wiener_filter(
+            noisy=sig_remix,
+            clean=sig_subtraction,
+            noise=sig_noise_remix,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            alpha_w=alpha_w,
+            beta_w=beta_w,
+        )
         # 保存分割后的声音文件，位置为脚本同级目录下的remix_audio文件夹
         if save_remix_audio_flag:
-            remix_audio_folder = "remix_audio"
+            remix_audio_folder = "subtraction_remix_audio"
             if not os.path.exists(remix_audio_folder):
                 os.makedirs(remix_audio_folder)
             remix_audio_path = os.path.join(
-                remix_audio_folder, f"{file_name}.remix.wav"
+                remix_audio_folder, f"{file_name}.remix_wiener.wav"
             )
-            sf.write(remix_audio_path, sig_remix, sr)
+            sf.write(remix_audio_path, sig_wiener, sr)
         # 预加重
-        sig_emphasis = librosa.effects.preemphasis(sig_remix)
+        sig_emphasis = librosa.effects.preemphasis(sig_wiener)
         # 短时傅里叶变换
         stft = librosa.stft(
             y=sig_emphasis, n_fft=n_fft, hop_length=hop_length, win_length=win_length
@@ -247,10 +297,155 @@ class AudioTrain:
             )
 
         # 特征拼接
-        combined_features = np.concatenate([mfcc, mfcc_deta, mfcc_deta2, imfcc], axis=0)
+        combined_features = np.concatenate([mfcc, mfcc_deta, mfcc_deta2], axis=0)
         # 转置
         combined_features = combined_features.T
         return combined_features
+
+    @staticmethod
+    def get_inverse_intervals(intervals: np.ndarray, maxlen: int) -> np.ndarray:
+        inverse_intervals = []
+        first = 0
+        for interval in intervals:
+            if interval[0] <= first:
+                first = interval[1]
+                continue
+            else:
+                inverse_intervals.append([first, interval[0]])
+                first = interval[1]
+        if first < maxlen:
+            inverse_intervals.append([first, maxlen])
+        inverse_intervals = np.array(inverse_intervals)
+        return inverse_intervals
+
+    @staticmethod
+    def spec_subtract(
+        noisy: np.ndarray,
+        noise: np.ndarray,
+        win_length: int = 4096,
+        hop_length: int = 1024,
+        n_fft: int = 4096,
+        alpha_s: float = 5,
+        beta_s: float = 0.001,
+        gamma_s: float = 1,
+        k: int = 1,
+    ) -> np.ndarray:
+        """
+        超减法去噪
+        noisy: 含噪声声音
+        noise: 噪声
+        win_length: 窗口大小
+        hop_length: 窗口移动步长
+        n_fft: FFT大小
+        alpha_s: 超减法参数
+        beta_s: 超减法参数
+        gamma_s: 超减法参数
+        k: 超减法参数
+        return: 去噪后的信号
+        """
+
+        # 计算noisy的频谱
+        S_noisy = librosa.stft(
+            noisy, n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )  # D x T
+        D, T = np.shape(S_noisy)
+        Mag_noisy = np.abs(S_noisy)
+        Phase_noisy = np.angle(S_noisy)
+        Power_noisy = Mag_noisy**2
+
+        # 计算noise的频谱
+        S_noise = librosa.stft(
+            noise, n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+        Mag_noise = np.mean(np.abs(S_noise), axis=1, keepdims=True)
+        Power_noise = Mag_noise**2
+        Power_noise = np.tile(Power_noise, [1, T])
+
+        ## 方法3 引入平滑
+        Mag_noisy_new = np.copy(Mag_noisy)
+        for t in range(k, T - k):
+            Mag_noisy_new[:, t] = np.mean(Mag_noisy[:, t - k : t + k + 1], axis=1)
+        Power_noisy = Mag_noisy_new**2
+
+        # 超减法去噪
+        Power_enhance = np.power(Power_noisy, gamma_s) - alpha_s * np.power(
+            Power_noise, gamma_s
+        )
+        Power_enhance = np.power(Power_enhance, 1 / gamma_s)
+
+        # 对于过小的值用 beta* Power_noise 替代
+        mask = (Power_enhance >= beta_s * Power_noise) - 0
+        Power_enhance = mask * Power_enhance + beta_s * (1 - mask) * Power_noise
+        Mag_enhance = np.sqrt(Power_enhance)
+
+        Mag_enhance_new = np.copy(Mag_enhance)
+        # 计算最大噪声残差
+        maxnr = np.max(np.abs(S_noise) - Mag_noise, axis=1)
+
+        for t in range(k, T - k):
+            index = np.where(Mag_enhance[:, t] < maxnr)[0]
+            temp = np.min(Mag_enhance[:, t - k : t + k + 1], axis=1)
+            Mag_enhance_new[index, t] = temp[index]
+
+        # 对信号进行恢复
+        S_enhance = Mag_enhance_new * np.exp(1j * Phase_noisy)
+        enhance = librosa.istft(
+            stft_matrix=S_enhance,
+            hop_length=hop_length,
+            win_length=win_length,
+            n_fft=n_fft,
+        )
+        return enhance
+
+    @staticmethod
+    def wiener_filter(
+        noisy: np.ndarray,
+        clean: np.ndarray,
+        noise: np.ndarray,
+        win_length: int = 4096,
+        hop_length: int = 1024,
+        n_fft: int = 4096,
+        alpha_w: float = 1,
+        beta_w: float = 2,
+    ):
+        """_使用维纳滤波对声音进行增强_
+
+        Args:
+            noisy (np.ndarray): _含噪声声音_
+            clean (np.ndarray): _清晰声音_
+            noise (np.ndarray): _噪声_
+            win_length (int, optional): _窗口大小. Defaults to 4096.
+            hop_length (int, optional): _步长. Defaults to 1024.
+            n_fft (int, optional): _FFT大小. Defaults to 4096.
+            alpha_w (float, optional): _权重. Defaults to 1.
+            beta_w (float, optional): _权重. Defaults to 2.
+
+        Returns:
+            np.ndarray: _增强后的声音_
+        """
+        # 计算noisy的频谱
+        S_noisy = librosa.stft(
+            y=noisy, n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )  # DxT
+        S_noise = librosa.stft(
+            y=noise, n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+        S_clean = librosa.stft(
+            y=clean, n_fft=n_fft, hop_length=hop_length, win_length=win_length
+        )
+
+        Pxx = np.mean((np.abs(S_clean)) ** 2, axis=1, keepdims=True)  # Dx1
+        Pnn = np.mean((np.abs(S_noise)) ** 2, axis=1, keepdims=True)
+
+        H = (Pxx / (Pxx + alpha_w * Pnn)) ** beta_w
+
+        S_enhec = S_noisy * H
+
+        wiener_enhance = librosa.istft(
+            S_enhec, hop_length=hop_length, win_length=win_length, n_fft=n_fft
+        )
+
+        return wiener_enhance
 
     # 保存图片的函数
     @staticmethod
@@ -400,22 +595,24 @@ class AudioTrain:
 
 
 if __name__ == "__main__":
-    at = AudioTrain(n_mfcc=20, save_fig_flag=True, save_remix_audio_flag=True, n_jobs=4)
+    at = AudioTrain(
+        n_mfcc=20, save_fig_flag=True, save_remix_audio_flag=True, n_jobs=4, top_db=20
+    )
     at.load_files("audio")
 
-    # af.train(
-    #     "audio",
-    #     "MLP",
-    #     solver="adam",
-    #     hidden_layer_sizes=(465, 465),
-    #     max_iter=10000,
-    #     alpha=0.0001,
-    #     verbose=True,
-    # )
+    at.train(
+        "audio",
+        "MLP",
+        solver="adam",
+        hidden_layer_sizes=(465, 465),
+        max_iter=10000,
+        alpha=0.0001,
+        verbose=True,
+    )
     at.train(
         X_name="audio",
         classifier_type="SVC",
-        test_size=0,
+        test_size=0.3,
         kernel="rbf",
         C=10,
         verbose=False,
